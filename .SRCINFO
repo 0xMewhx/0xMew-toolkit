@@ -1,0 +1,20 @@
+pkgbase = 0xmew-toolkit
+	pkgdesc = Advanced Network Attack Toolkit by 0xMew (ARP Spoof, Kill, SNI Spy)
+	pkgver = 2.1
+	pkgrel = 1
+	url = https://github.com/0xMewhx/0xMew-toolkit
+	arch = any
+	license = MIT
+	depends = python
+	depends = tcpdump
+	depends = ethtool
+	depends = macchanger
+	depends = python-scapy
+	depends = python-cryptography
+	depends = nmap
+	depends = aircrack-ng
+	depends = wireless_tools
+	source = 0xmew-toolkit-2.1.tar.gz::https://github.com/0xMewhx/0xMew-toolkit/archive/refs/tags/v2.1.tar.gz
+	sha256sums = SKIP
+
+pkgname = 0xmew-toolkit

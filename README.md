@@ -6,6 +6,8 @@ Designed for penetration testing, network reconnaissance, and security auditing.
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+For Arch
+
 ## 🔥 Features
 
 * **MITM Attacks:** ARP Spoofing, DNS Redirection.

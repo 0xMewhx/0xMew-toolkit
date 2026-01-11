@@ -1,16 +1,18 @@
 # Maintainer: 0xMew <hacker@localhost>
-pkgname=0xmew-tool
-pkgver=2.1
+pkgname=0xmew-toolkit
+pkgver=3.5
 pkgrel=1
 pkgdesc="Advanced Network Attack Toolkit by 0xMew (ARP Spoof, Kill, SNI Spy)"
 arch=('any')
-url="https://github.com/your-repo/wow" # Если есть, или локально
+url="https://github.com/0xMewhx/0xMew-toolkit"
 license=('MIT')
 depends=('python' 'tcpdump' 'ethtool' 'macchanger' 'python-scapy' 'python-cryptography' 'nmap' 'aircrack-ng' 'wireless_tools')
-source=("wow.py") # Файл должен лежать рядом с PKGBUILD
-sha256sums=('SKIP') # SKIP, так как файл меняется локально
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
 
 package() {
+    cd "0xMew-toolkit-${pkgver}"
+
     # 1. Создаем папку в /opt/
     install -d "$pkgdir/opt/$pkgname"
 

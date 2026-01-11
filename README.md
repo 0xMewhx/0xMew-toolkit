@@ -3,6 +3,7 @@
 **Advanced Red Team Toolkit** for Linux.
 Designed for penetration testing, network reconnaissance, and security auditing.
 
+[![AUR version](https://img.shields.io/aur/version/0xmew-toolkit.svg)](https://aur.archlinux.org/packages/0xmew-toolkit/)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Platform](https://img.shields.io/badge/Platform-Linux-orange)

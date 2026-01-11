@@ -1,6 +1,6 @@
 # Maintainer: 0xMew <hacker@localhost>
 pkgname=0xmew-toolkit
-pkgver=3.4
+pkgver=3.5
 pkgrel=1
 pkgdesc="Advanced Network Attack Toolkit by 0xMew (ARP Spoof, Kill, SNI Spy)"
 arch=('any')

